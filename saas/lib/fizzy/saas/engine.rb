@@ -96,6 +96,12 @@ module Fizzy
       end
 
       # Load test mocks automatically in test environment
+      # The account slug is moved off PATH_INFO before routing (config/initializers/tenanting), so the
+      # routes declared with filter_path_parameters are matched past it.
+      initializer "fizzy_saas.logging.path_filter_prefix", after: :load_config_initializers do
+        RailsStructuredLogging.path_filter.prefix = AccountSlug::PATH_INFO_MATCH
+      end
+
       initializer "fizzy_saas.test_mocks", after: :load_config_initializers do
         if Rails.env.test?
           require_relative "testing"

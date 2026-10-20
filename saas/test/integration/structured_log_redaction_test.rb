@@ -147,6 +147,29 @@ class Fizzy::Saas::StructuredLogRedactionTest < ActionDispatch::IntegrationTest
     assert_no_secret CODE, [ config.before_send_transaction.call(transaction, {}).spans.first[:description] ]
   end
 
+  test "Sentry reports a join link's URL, Referer and transaction without its code" do
+    config = Sentry::Configuration.new
+    Fizzy::Saas::SentrySqlRedaction.install(config)
+
+    event = Sentry::ErrorEvent.new(configuration: config)
+    event.rack_env = Rack::MockRequest.env_for("https://app.fizzy.do/1234567/join/#{CODE}", "HTTP_REFERER" => "https://app.fizzy.do/public/boards/#{CODE}")
+    event.transaction = "/1234567/join/#{CODE}"
+    event = config.before_send.call(event, {})
+
+    assert_equal "https://app.fizzy.do/1234567/join/[FILTERED]", event.request.url
+    assert_equal "https://app.fizzy.do/public/boards/[FILTERED]", event.request.headers["Referer"]
+    assert_equal "/1234567/join/[FILTERED]", event.transaction
+  end
+
+  test "opening a join link logs no code in its path" do
+    code = accounts("37s").join_code.code
+
+    lines = structured_log_lines { get join_path(code, script_name: accounts("37s").slug) }
+
+    assert lines.any? { |line| JSON.parse(line).dig("url", "path").to_s.end_with?("/join/[FILTERED]") }
+    assert_no_secret code, lines
+  end
+
   test "Sentry breadcrumbs for other tables keep their SQL" do
     config = Sentry::Configuration.new
     Fizzy::Saas::SentrySqlRedaction.install(config)
