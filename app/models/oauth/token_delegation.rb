@@ -91,12 +91,19 @@ class Oauth::TokenDelegation
     self
   end
 
-  # The one API token this exchange issues. The subject grant is locked
-  # first, as revoking it locks it before sweeping its delegated tokens, and
-  # judged again under the lock: an exchange that races a revocation either
-  # finds it gone and is refused, or inserts first and is swept with it.
+  # The one API token this exchange issues, under two locks, each judged
+  # again once held. The client's comes first, as Oauth::Client#redeem takes
+  # it before issuing a grant and destroying the client takes it before
+  # cascading its tokens, so a token can't land after that cascade. Then the
+  # subject grant's, which revoking it takes before sweeping its delegated
+  # tokens, so an exchange racing a revocation is either refused or inserted
+  # first and swept with it. Nothing takes the two in the other order.
   def mint!
     Identity::AccessToken.transaction do
+      unless Oauth::Client.lock.find_by(id: client.id)&.delegation_client?
+        raise Refusal.new("unauthorized_client", "Client not configured for token delegation")
+      end
+
       @subject = Identity::AccessToken.lock.find_by(id: subject.id)
       judge_subject
 

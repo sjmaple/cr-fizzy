@@ -41,20 +41,40 @@ class Oauth::TokenDelegationTest < ActiveSupport::TestCase
     assert_not token.reload.honored?
   end
 
-  test "a delegated token the replica misses is looked up on the primary" do
+  test "a delegated token the replica doesn't honor is judged again on the primary, grant included" do
     token = delegation.validate!.mint!
-    relation = Identity::AccessToken.active
-    Identity::AccessToken.stubs(:active).returns(relation)
-    relation.stubs(:find_by_raw_token).returns(nil).then.returns(token)
-    ApplicationRecord.expects(:with_writing_role).yields.returns(token)
+    judged_on = []
+    on_primary = false
 
-    assert_equal token, Identity::AccessToken.find_active(token.raw_token)
+    Identity::AccessToken.any_instance.stubs(:honored_delegation?).with { judged_on << on_primary }.returns(false).then.returns(true)
+    on_the_primary -> { on_primary = true } do
+      assert_equal token, Identity::AccessToken.find_honored(token.raw_token)
+    end
+
+    assert_equal [ false, true ], judged_on
   end
 
   test "an unknown token without the delegated prefix never costs a primary read" do
     ApplicationRecord.expects(:with_writing_role).never
 
-    assert_nil Identity::AccessToken.find_active("fizzy_at_unknown")
+    assert_nil Identity::AccessToken.find_honored("fizzy_at_unknown")
+  end
+
+  test "a write token delegated from a grant since narrowed to read can't write" do
+    token = delegation.validate!.mint!
+    assert token.write?
+
+    assert @subject.refresh(permission: "read")
+
+    assert_not token.reload.honored?
+  end
+
+  test "a mint racing the client's deletion is refused" do
+    delegation.validate!
+    @client.delete
+
+    error = assert_raises(Oauth::TokenDelegation::Refusal) { @delegation.mint! }
+    assert_equal "unauthorized_client", error.error
   end
 
   test "expired delegated tokens are cleaned up, and grants are not" do
@@ -115,7 +135,21 @@ class Oauth::TokenDelegationTest < ActiveSupport::TestCase
   end
 
   private
+    # Stands in for the writing role, which SQLite has no separate connection
+    # for: runs the block, noting that it ran there.
+    def on_the_primary(entered)
+      ApplicationRecord.singleton_class.alias_method :with_writing_role_without_test, :with_writing_role
+      ApplicationRecord.define_singleton_method(:with_writing_role) do |&block|
+        entered.call
+        block.call
+      end
+      yield
+    ensure
+      ApplicationRecord.singleton_class.alias_method :with_writing_role, :with_writing_role_without_test
+      ApplicationRecord.singleton_class.remove_method :with_writing_role_without_test
+    end
+
     def delegation(**options)
-      Oauth::TokenDelegation.new(client: @client, subject_token: @subject.raw_token, api_origin: "http://www.example.com", **options)
+      @delegation = Oauth::TokenDelegation.new(client: @client, subject_token: @subject.raw_token, api_origin: "http://www.example.com", **options)
     end
 end

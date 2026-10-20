@@ -109,23 +109,19 @@ class Identity::AccessToken < ApplicationRecord
   class << self
     # The token a bearer request may authenticate with: active and honored.
     # Whether it permits the request's method is the caller's question.
-    def find_honored(token)
-      if (access_token = find_active(token)) && access_token.honored?
-        access_token
-      end
-    end
-
+    #
     # The hosted MCP server uses a delegated token within milliseconds of the
     # exchange writing it on the primary, and GET requests read from a
-    # replica, which may not have it yet. A bearer request has no session for
-    # a replication barrier to wait on, so a delegated token the replica
-    # doesn't know is looked up again on the primary. Only a miss costs that
-    # read, and only for the delegated prefix. A datacenter that can't reach
-    # the primary (Deployment::DatabaseResolver) can't, and keeps the
-    # replica's answer, which is why the MCP server reaches Fizzy's primary
-    # datacenter.
-    def find_active(token)
-      active.find_by_raw_token(token) || find_active_delegated_on_primary(token)
+    # replica, which may have neither the token nor, for a grant just
+    # issued, the grant it was delegated from. A bearer request has no
+    # session for a replication barrier to wait on, so a delegated token the
+    # replica doesn't honor is judged again on the primary, token and grant
+    # alike. Only a refusal costs that read, and only for the delegated
+    # prefix. A datacenter that can't reach the primary
+    # (Deployment::DatabaseResolver) keeps the replica's answer, which is why
+    # the MCP server reaches Fizzy's primary datacenter.
+    def find_honored(token)
+      find_honored_here(token) || find_honored_delegated_on_primary(token)
     end
 
     # Delegated tokens live minutes, so expired ones are deleted as they
@@ -177,9 +173,15 @@ class Identity::AccessToken < ApplicationRecord
     end
 
     private
-      def find_active_delegated_on_primary(token)
+      def find_honored_here(token)
+        if (access_token = active.find_by_raw_token(token)) && access_token.honored?
+          access_token
+        end
+      end
+
+      def find_honored_delegated_on_primary(token)
         if token.is_a?(String) && token.start_with?(PREFIXES[:delegated]) && Deployment::DatabaseResolver.in_primary_datacenter?
-          ApplicationRecord.with_writing_role { active.find_by_raw_token(token) }
+          ApplicationRecord.with_writing_role { find_honored_here(token) }
         end
       end
 
@@ -207,9 +209,11 @@ class Identity::AccessToken < ApplicationRecord
   #
   # A delegated token is honored only while the grant it was delegated from
   # still is, read afresh on every request: a revocation the sweep missed, or
-  # one that raced the exchange, refuses it at its next use.
+  # one that raced the exchange, refuses it at its next use. Nor may it
+  # write once that grant can't: a refresh that narrows the grant to read
+  # narrows the tokens delegated from it too.
   def honored?
-    honored_client? && (!delegated? || self.class.grants.unlapsed.find_by(id: delegated_from_id)&.honored_client?)
+    honored_client? && (!delegated? || honored_delegation?)
   end
 
   def delegated?
@@ -271,6 +275,11 @@ class Identity::AccessToken < ApplicationRecord
   end
 
   protected
+    def honored_delegation?
+      grant = self.class.grants.unlapsed.find_by(id: delegated_from_id)
+      grant.present? && grant.honored_client? && (read? || grant.write?)
+    end
+
     def honored_client?
       oauth_client_id.nil? || Oauth::Availability.acceptance_enabled? || Oauth::Availability.acceptance_enabled?(oauth_client&.client_id)
     end
