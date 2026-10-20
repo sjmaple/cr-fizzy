@@ -20,6 +20,12 @@ class Fizzy::Saas::CredentialPathsTest < ActiveSupport::TestCase
     assert_path_filtered "#{@slug}/public/collections/made-up-key", "made-up-key"
   end
 
+  test "a path under a declared route that no route matches is filtered too" do
+    # A scanner's 404, such as /<slug>/join/<code>/xmlrpc.php
+    assert_path_filtered "#{join_path("made-up-code", script_name: @slug)}/xmlrpc.php", "made-up-code"
+    assert_path_filtered "#{public_board_path("made-up-key", script_name: @slug)}/wp-login.php", "made-up-key"
+  end
+
   test "an email address confirmation token is filtered" do
     assert_path_filtered user_email_address_confirmation_path(1, "made-up-token", script_name: @slug), "made-up-token"
   end
