@@ -60,6 +60,25 @@ class Oauth::TokenDelegationTest < ActiveSupport::TestCase
     assert_nil Identity::AccessToken.find_honored("fizzy_at_unknown")
   end
 
+  test "a malformed fizzy_dt_ token never costs a primary read" do
+    minted = Identity::AccessToken.generate_token(:delegated)
+    ApplicationRecord.expects(:with_writing_role).never
+
+    [ "fizzy_dt_", "fizzy_dt_nothing", minted.chop, minted + "x", minted.sub(/.\z/, "0"), minted.sub(/.\z/, "l"), minted + "\n" ].each do |token|
+      assert_nil Identity::AccessToken.find_honored(token), token.inspect
+    end
+  end
+
+  test "a well-shaped but unknown fizzy_dt_ token costs one primary lookup" do
+    ApplicationRecord.expects(:with_writing_role).once.returns(nil)
+
+    assert_nil Identity::AccessToken.find_honored(Identity::AccessToken.generate_token(:delegated))
+  end
+
+  test "every minted delegated token has the shape the primary fallback admits" do
+    assert_match Identity::AccessToken::DELEGATED_TOKEN, delegation.validate!.mint!.raw_token
+  end
+
   test "a write token delegated from a grant since narrowed to read can't write" do
     token = delegation.validate!.mint!
     assert token.write?

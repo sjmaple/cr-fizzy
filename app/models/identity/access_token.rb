@@ -64,6 +64,10 @@ class Identity::AccessToken < ApplicationRecord
   # working.
   BODY_LENGTH = 44
 
+  # Exactly what generate_token(:delegated) mints. Only a token of this shape
+  # is worth a second look on the primary (see find_honored).
+  DELEGATED_TOKEN = /\A#{PREFIXES[:delegated]}[#{BASE58.join}]{#{BODY_LENGTH}}\z/
+
   enum :permission, %w[ read write ].index_by(&:itself), default: :read
 
   # Tokens are stored as digests (TokenDigester). The raw values exist only in
@@ -116,8 +120,11 @@ class Identity::AccessToken < ApplicationRecord
     # issued, the grant it was delegated from. A bearer request has no
     # session for a replication barrier to wait on, so a delegated token the
     # replica doesn't honor is judged again on the primary, token and grant
-    # alike. Only a refusal costs that read, and only for the delegated
-    # prefix. A datacenter that can't reach the primary
+    # alike. Only a refusal costs that read, and only for a token of exactly
+    # the shape the exchange mints, so anything else, a made-up fizzy_dt_
+    # string included, never reaches the primary. One that is shaped right
+    # and refused costs one more indexed read there, as many as the replica
+    # just spent on it. A datacenter that can't reach the primary
     # (Deployment::DatabaseResolver) keeps the replica's answer, which is why
     # the MCP server reaches Fizzy's primary datacenter.
     def find_honored(token)
@@ -180,7 +187,7 @@ class Identity::AccessToken < ApplicationRecord
       end
 
       def find_honored_delegated_on_primary(token)
-        if token.is_a?(String) && token.start_with?(PREFIXES[:delegated]) && Deployment::DatabaseResolver.in_primary_datacenter?
+        if token.is_a?(String) && token.match?(DELEGATED_TOKEN) && Deployment::DatabaseResolver.in_primary_datacenter?
           ApplicationRecord.with_writing_role { find_honored_here(token) }
         end
       end
