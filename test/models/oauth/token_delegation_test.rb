@@ -88,6 +88,25 @@ class Oauth::TokenDelegationTest < ActiveSupport::TestCase
     assert_not token.reload.honored?
   end
 
+  test "a mint after a refresh narrowed the grant mints what the grant now holds" do
+    delegation.validate!
+    @subject.update_columns permission: "read"
+
+    token = @delegation.mint!
+
+    assert token.read?
+    assert_equal "read", @delegation.scope
+    assert token.honored?
+  end
+
+  test "a mint asking for write after a refresh narrowed the grant is refused" do
+    delegation(requested_scope: "write").validate!
+    @subject.update_columns permission: "read"
+
+    error = assert_raises(Oauth::TokenDelegation::Refusal) { @delegation.mint! }
+    assert_equal "invalid_scope", error.error
+  end
+
   test "a mint racing the client's deletion is refused" do
     delegation.validate!
     @client.delete

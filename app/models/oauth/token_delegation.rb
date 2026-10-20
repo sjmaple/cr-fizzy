@@ -97,7 +97,9 @@ class Oauth::TokenDelegation
   # cascading its tokens, so a token can't land after that cascade. Then the
   # subject grant's, which revoking it takes before sweeping its delegated
   # tokens, so an exchange racing a revocation is either refused or inserted
-  # first and swept with it. Nothing takes the two in the other order.
+  # first and swept with it. Scope is resolved again too, so a refresh that
+  # narrowed the grant meanwhile narrows the token, or refuses a request for
+  # what the grant no longer holds. Nothing takes the two in the other order.
   def mint!
     Identity::AccessToken.transaction do
       unless Oauth::Client.lock.find_by(id: client.id)&.delegation_client?
@@ -106,6 +108,7 @@ class Oauth::TokenDelegation
 
       @subject = Identity::AccessToken.lock.find_by(id: subject.id)
       judge_subject
+      @permission = resolve_permission
 
       Identity::AccessToken.create! \
         identity_id: subject.identity_id,
