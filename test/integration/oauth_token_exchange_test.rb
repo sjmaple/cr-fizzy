@@ -58,6 +58,19 @@ class OauthTokenExchangeTest < ActionDispatch::IntegrationTest
     assert_invalid_grant "Subject token is not valid"
   end
 
+  test "the delegated token reaches its subject's account alone, and discovers it at /my/identity" do
+    accounts(:initech).users.create!(identity: identities(:david), name: "David", role: :member, verified_at: Time.current)
+    exchange
+    delegated = { "HTTP_AUTHORIZATION" => "Bearer #{response.parsed_body["access_token"]}" }
+
+    untenanted { get my_identity_path, env: delegated, as: :json }
+    assert_response :success
+    assert_equal [ accounts("37s").id ], response.parsed_body["accounts"].map { |account| account["id"] }
+
+    get users_path(script_name: "/#{accounts(:initech).external_account_id}"), env: delegated, as: :json
+    assert_response :unauthorized
+  end
+
   test "the token lives no longer than the subject" do
     @subject.update_columns expires_at: 90.seconds.from_now
 
