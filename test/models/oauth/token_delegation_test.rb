@@ -116,6 +116,6 @@ class Oauth::TokenDelegationTest < ActiveSupport::TestCase
 
   private
     def delegation(**options)
-      Oauth::TokenDelegation.new(client: @client, subject_token: @subject.raw_token, **options)
+      Oauth::TokenDelegation.new(client: @client, subject_token: @subject.raw_token, api_origin: "http://www.example.com", **options)
     end
 end

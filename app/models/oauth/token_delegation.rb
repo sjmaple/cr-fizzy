@@ -23,7 +23,7 @@
 #   invalid_request, as bc3 does: the server tells a dead subject (terminal,
 #   reconnect) from a malformed request (its own bug).
 #
-#   delegation = Oauth::TokenDelegation.new(client:, subject_token:, requested_scope:, resource:)
+#   delegation = Oauth::TokenDelegation.new(client:, subject_token:, api_origin:, requested_scope:, resource:)
 #   delegation.validate!
 #   access_token = delegation.mint!
 class Oauth::TokenDelegation
@@ -45,7 +45,7 @@ class Oauth::TokenDelegation
     end
   end
 
-  attr_reader :client, :subject_token, :requested_scope, :resource, :subject, :permission
+  attr_reader :client, :subject_token, :requested_scope, :resource, :api_origin, :subject, :permission
 
   # Delegation is on only where Fizzy is configured with a protected resource
   # to issue grants for (Oauth.mcp_resources). Off on every install that
@@ -62,8 +62,10 @@ class Oauth::TokenDelegation
     false
   end
 
-  def initialize(client:, subject_token:, requested_scope: nil, resource: nil)
+  # api_origin is Fizzy's own origin, the one resource a minted token is for.
+  def initialize(client:, subject_token:, api_origin:, requested_scope: nil, resource: nil)
     @client = client
+    @api_origin = api_origin
     @subject_token = subject_token
     @requested_scope = requested_scope
     @resource = resource
@@ -161,7 +163,7 @@ class Oauth::TokenDelegation
     # API is the only place it can be, so Fizzy's own origin is accepted like
     # an absent parameter, and anything else is refused.
     def validate_resource
-      if resource.present? && resource != Rails.application.routes.url_helpers.root_url(script_name: nil).delete_suffix("/")
+      if resource.present? && resource != api_origin
         raise Refusal.new("invalid_target", "resource does not match the subject token's account")
       end
     end
